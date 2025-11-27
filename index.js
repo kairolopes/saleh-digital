@@ -292,6 +292,95 @@ app.get("/orders/:id", async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// 👥 CLIENTES / CRM
+// -------------------------------------------------------------
+
+// Criar ou atualizar cliente
+app.post("/customers", async (req, res) => {
+  try {
+    const {
+      name,
+      phone,
+      channel = "presencial", // garcom | nicochat | app | presencial
+      notes = ""
+    } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: "Telefone (phone) é obrigatório" });
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const docRef = db.collection("customers").doc(phone);
+    const snap = await docRef.get();
+
+    if (snap.exists) {
+      // atualiza
+      await docRef.update({
+        name,
+        channel,
+        notes,
+        updatedAt: now
+      });
+      const updated = await docRef.get();
+      return res.json({ id: updated.id, ...updated.data() });
+    } else {
+      // cria
+      await docRef.set({
+        name,
+        phone,
+        channel,
+        notes,
+        createdAt: now,
+        updatedAt: now
+      });
+      const created = await docRef.get();
+      return res.status(201).json({ id: created.id, ...created.data() });
+    }
+  } catch (err) {
+    console.error("Erro /customers POST:", err);
+    res.status(500).json({ error: "Erro ao salvar cliente" });
+  }
+});
+
+// Listar clientes (limit 200)
+app.get("/customers", async (req, res) => {
+  try {
+    const snap = await db
+      .collection("customers")
+      .orderBy("name")
+      .limit(200)
+      .get();
+
+    const customers = snap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    res.json(customers);
+  } catch (err) {
+    console.error("Erro /customers GET:", err);
+    res.status(500).json({ error: "Erro ao listar clientes" });
+  }
+});
+
+// Buscar cliente por telefone
+app.get("/customers/:phone", async (req, res) => {
+  try {
+    const phone = req.params.phone;
+    const snap = await db.collection("customers").doc(phone).get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Cliente não encontrado" });
+    }
+    res.json({ id: snap.id, ...snap.data() });
+  } catch (err) {
+    console.error("Erro /customers/:phone GET:", err);
+    res.status(500).json({ error: "Erro ao buscar cliente" });
+  }
+});
+
+
+// -------------------------------------------------------------
 // 🚀 Rota raiz
 // -------------------------------------------------------------
 app.get("/", (req, res) => {

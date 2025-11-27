@@ -289,14 +289,15 @@ app.post("/orders", async (req, res) => {
   }
 });
 
-// Listar pedidos por status
+// Listar pedidos por status (versão simples, sem índice)
 app.get("/orders", async (req, res) => {
   try {
     const status = req.query.status || "pendente";
+
+    // Tira o orderBy para não precisar de índice composto
     const snap = await db
       .collection("orders")
       .where("status", "==", status)
-      .orderBy("createdAt", "asc")
       .get();
 
     const orders = snap.docs.map(doc => ({
@@ -311,30 +312,6 @@ app.get("/orders", async (req, res) => {
   }
 });
 
-// Atualizar status do pedido
-app.patch("/orders/:id/status", async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const { status } = req.body; // pendente | aceito_cozinha | pronto | entregue | cancelado
-
-    const orderRef = db.collection("orders").doc(orderId);
-    const snap = await orderRef.get();
-    if (!snap.exists) {
-      return res.status(404).json({ error: "Pedido não encontrado" });
-    }
-
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    await orderRef.update({
-      status,
-      updatedAt: now
-    });
-
-    res.json({ message: "Status atualizado" });
-  } catch (err) {
-    console.error("Erro /orders/:id/status PATCH:", err);
-    res.status(500).json({ error: "Erro ao atualizar status do pedido" });
-  }
-});
 
 // Consultar status de um pedido
 app.get("/orders/:id", async (req, res) => {

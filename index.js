@@ -169,44 +169,7 @@ app.get("/products/:id/history", async (req, res) => {
 });
 
 
-// Histórico de compras + média das últimas 4
-app.get("/products/:id/history", async (req, res) => {
-  try {
-    const productId = req.params.id;
-    const productRef = db.collection("products").doc(productId);
 
-    const productSnap = await productRef.get();
-    if (!productSnap.exists) {
-      return res.status(404).json({ error: "Produto não encontrado" });
-    }
-
-    const purchasesSnap = await productRef
-      .collection("purchases")
-      .orderBy("purchaseDate", "desc")
-      .get();
-
-    const purchases = purchasesSnap.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-
-    const last4 = purchases.slice(0, 4);
-    let avgUnitPrice = null;
-    if (last4.length > 0) {
-      const sum = last4.reduce((acc, p) => acc + (p.unitPrice || 0), 0);
-      avgUnitPrice = sum / last4.length;
-    }
-
-    res.json({
-      product: { id: productId, ...productSnap.data() },
-      purchases,
-      averageLast4UnitPrice: avgUnitPrice
-    });
-  } catch (err) {
-    console.error("Erro /products/:id/history GET:", err);
-    res.status(500).json({ error: "Erro ao buscar histórico" });
-  }
-});
 
 // 🔄 Atualizar um produto (ex: corrigir descrição)
 app.patch("/products/:id", async (req, res) => {

@@ -144,6 +144,31 @@ app.post("/products/:id/purchase", async (req, res) => {
   }
 });
 
+// 📜 Histórico de compras de um produto
+app.get("/products/:id/history", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const productRef = db.collection("products").doc(id);
+
+    // Aqui eu assumo que na rota /purchase você salvou em "purchases"
+    const historySnap = await productRef
+      .collection("purchases")
+      .orderBy("purchaseDate", "desc")
+      .get();
+
+    const history = historySnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    res.json(history);
+  } catch (err) {
+    console.error("Erro em GET /products/:id/history", err);
+    res.status(500).json({ error: "Erro ao buscar histórico" });
+  }
+});
+
+
 // Histórico de compras + média das últimas 4
 app.get("/products/:id/history", async (req, res) => {
   try {
@@ -182,6 +207,52 @@ app.get("/products/:id/history", async (req, res) => {
     res.status(500).json({ error: "Erro ao buscar histórico" });
   }
 });
+
+// 🔄 Atualizar um produto (ex: corrigir descrição)
+app.patch("/products/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+
+    const docRef = db.collection("products").doc(id);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Produto não encontrado" });
+    }
+
+    // Só atualiza os campos que vierem no body
+    const camposPermitidos = [
+      "description",
+      "unit",
+      "unitSize",
+      "unitPrice",
+      "yieldPercent",
+      "notes",
+      "location"
+    ];
+
+    const updateData = {};
+    camposPermitidos.forEach((campo) => {
+      if (body[campo] !== undefined) {
+        updateData[campo] = body[campo];
+      }
+    });
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar" });
+    }
+
+    await docRef.update(updateData);
+
+    const updated = await docRef.get();
+    res.json({ id: updated.id, ...updated.data() });
+  } catch (err) {
+    console.error("Erro em PATCH /products/:id", err);
+    res.status(500).json({ error: "Erro ao atualizar produto" });
+  }
+});
+
 
 // -------------------------------------------------------------
 // 🍽️ PEDIDOS (GARÇOM / COZINHA / NICOCHAT)

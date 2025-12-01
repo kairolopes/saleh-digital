@@ -200,6 +200,105 @@ app.post("/products/:id/purchase", async (req, res) => {
   }
 });
 
+// Compra rápida: encontra (ou cria) produto por descrição + unidade
+app.post("/products/quick-purchase", async (req, res) => {
+  try {
+    const {
+      description,
+      unit,
+      quantity,
+      totalPrice,
+      purchaseDate,
+      supplier = ""
+    } = req.body;
+
+    if (!description || !unit || !quantity || !totalPrice) {
+      return res.status(400).json({
+        error: "Campos obrigatórios: description, unit, quantity, totalPrice"
+      });
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const unitPrice = totalPrice / quantity;
+    const purchaseD =
+      purchaseDate || new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+    // 1) Tenta achar produto por descrição + unidade
+    const querySnap = await db
+      .collection("products")
+      .where("description", "==", description)
+      .where("unit", "==", unit)
+      .limit(1)
+      .get();
+
+    let productRef;
+    let previousQuantity;
+    let currentQuantity;
+    let createdNew = false;
+
+    if (querySnap.empty) {
+      // 2) Não existe -> cria produto novo
+      productRef = db.collection("products").doc();
+      previousQuantity = 0;
+      currentQuantity = quantity;
+
+      await productRef.set({
+        description,
+        unit,
+        unitSize: null,
+        unitPrice,
+        yieldPercent: null,
+        notes: "",
+        location: "",
+        previousQuantity,
+        purchaseQuantity: quantity,
+        currentQuantity,
+        createdAt: now,
+        updatedAt: now
+      });
+
+      createdNew = true;
+    } else {
+      // 3) Já existe -> usa o primeiro encontrado
+      const doc = querySnap.docs[0];
+      productRef = doc.ref;
+      const product = doc.data();
+
+      previousQuantity = product.currentQuantity || 0;
+      currentQuantity = previousQuantity + quantity;
+
+      await productRef.update({
+        previousQuantity,
+        purchaseQuantity: quantity,
+        currentQuantity,
+        unitPrice,
+        updatedAt: now
+      });
+    }
+
+    // 4) Registra histórico da compra
+    const purchaseRef = await productRef.collection("purchases").add({
+      purchaseDate: purchaseD,
+      quantity,
+      totalPrice,
+      unitPrice,
+      supplier,
+      createdAt: now
+    });
+
+    return res.status(201).json({
+      message: "Compra registrada com sucesso (quick-purchase)",
+      productId: productRef.id,
+      purchaseId: purchaseRef.id,
+      createdNewProduct: createdNew
+    });
+  } catch (err) {
+    console.error("Erro /products/quick-purchase POST:", err);
+    return res.status(500).json({ error: "Erro em quick-purchase" });
+  }
+});
+
+
 // 📜 Histórico de compras de um produto
 app.get("/products/:id/history", async (req, res) => {
   try {

@@ -82,50 +82,42 @@ app.post("/products", async (req, res) => {
 });
 
 
-// Criar vários produtos em lote
+// Criar vários produtos em lote (só com descrição, unidade e preço)
 app.post("/products/batch", async (req, res) => {
   try {
-    // pode vir como { items: [...] } ou diretamente como [...]
     const items = Array.isArray(req.body) ? req.body : req.body.items;
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Envie um array de produtos em 'items'" });
+      return res.status(400).json({ error: "Envie um array de produtos em 'items' ou um array direto no body" });
     }
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
 
     items.forEach((item) => {
-      const {
-        description,
-        unit,
-        unitSize,
-        unitPrice,
-        yieldPercent = 100,
-        notes = "",
-        location = "",
-        previousQuantity = 0,
-        purchaseQuantity = 0,
-        currentQuantity = 0
-      } = item;
+      const { description, unit, unitPrice } = item;
 
       // validação básica
       if (!description || !unit || unitPrice === undefined) {
-        return;
+        return; // pula linhas inválidas
       }
 
       const docRef = db.collection("products").doc();
+
       batch.set(docRef, {
         description,
         unit,
-        unitSize,
         unitPrice,
-        yieldPercent,
-        notes,
-        location,
-        previousQuantity,
-        purchaseQuantity,
-        currentQuantity,
+
+        // demais campos ficam "em branco" (padrão)
+        unitSize: null,
+        yieldPercent: null,
+        notes: "",
+        location: "",
+        previousQuantity: 0,
+        purchaseQuantity: 0,
+        currentQuantity: 0,
+
         createdAt: now,
         updatedAt: now
       });

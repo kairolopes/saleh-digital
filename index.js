@@ -81,6 +81,70 @@ app.post("/products", async (req, res) => {
   }
 });
 
+
+// Criar vários produtos em lote
+app.post("/products/batch", async (req, res) => {
+  try {
+    // pode vir como { items: [...] } ou diretamente como [...]
+    const items = Array.isArray(req.body) ? req.body : req.body.items;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "Envie um array de produtos em 'items'" });
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+
+    items.forEach((item) => {
+      const {
+        description,
+        unit,
+        unitSize,
+        unitPrice,
+        yieldPercent = 100,
+        notes = "",
+        location = "",
+        previousQuantity = 0,
+        purchaseQuantity = 0,
+        currentQuantity = 0
+      } = item;
+
+      // validação básica
+      if (!description || !unit || unitPrice === undefined) {
+        return;
+      }
+
+      const docRef = db.collection("products").doc();
+      batch.set(docRef, {
+        description,
+        unit,
+        unitSize,
+        unitPrice,
+        yieldPercent,
+        notes,
+        location,
+        previousQuantity,
+        purchaseQuantity,
+        currentQuantity,
+        createdAt: now,
+        updatedAt: now
+      });
+    });
+
+    await batch.commit();
+
+    res.status(201).json({
+      message: "Produtos criados em lote com sucesso",
+      total: items.length
+    });
+  } catch (err) {
+    console.error("Erro /products/batch POST:", err);
+    res.status(500).json({ error: "Erro ao criar produtos em lote" });
+  }
+});
+
+
+
 // Listar produtos
 app.get("/products", async (req, res) => {
   try {

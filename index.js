@@ -285,16 +285,20 @@ app.post("/products/quick-purchase", async (req, res) => {
     }
 
     const q = Number(quantity);
-    const tot = Number(totalPrice);
-
-    if (isNaN(q) || isNaN(tot)) {
+    const rawTotal = Number(totalPrice);      // valor que vem do Nicochat (em centavos)
+    
+    if (isNaN(q) || isNaN(rawTotal)) {
       return res.status(400).json({
         error: "quantity e totalPrice devem ser numéricos"
       });
     }
-
+    
+    // 👇 converte de centavos -> reais
+    const tot = rawTotal / 100;               // 1350 -> 13.50
+    
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const unitPrice = tot / q;
+    const unitPrice = tot / q;                // preço unitário em reais
+
     const THRESHOLD = 0.6; // similaridade mínima
 
     const descNorm = normalizeString(description);

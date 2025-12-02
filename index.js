@@ -172,12 +172,14 @@ app.post("/products/:id/purchase", async (req, res) => {
     const unitPrice = totalPrice / quantity;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // Adiciona no histórico
+    // Adiciona no histórico (com estoque antes/depois)
     const purchaseRef = await productRef.collection("purchases").add({
       purchaseDate, // string "YYYY-MM-DD"
       quantity,
       totalPrice,
       unitPrice,
+      stockBefore: previousQuantity,
+      stockAfter: currentQuantity,
       createdAt: now
     });
 
@@ -276,13 +278,15 @@ app.post("/products/quick-purchase", async (req, res) => {
       });
     }
 
-    // 4) Registra histórico da compra
+       // 4) Registra histórico da compra (com estoque antes/depois)
     const purchaseRef = await productRef.collection("purchases").add({
       purchaseDate: purchaseD,
       quantity,
       totalPrice,
       unitPrice,
       supplier,
+      stockBefore: previousQuantity,
+      stockAfter: currentQuantity,
       createdAt: now
     });
 
@@ -324,6 +328,55 @@ app.get("/products/:id/history", async (req, res) => {
 });
 
 
+// 🔍 Resumo completo do produto + média dos últimos 4 preços
+app.get("/products/:id/summary", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const productRef = db.collection("products").doc(id);
+    const productSnap = await productRef.get();
+
+    if (!productSnap.exists) {
+      return res.status(404).json({ error: "Produto não encontrado" });
+    }
+
+    const product = { id: productSnap.id, ...productSnap.data() };
+
+    // Busca as 4 últimas compras (ordenadas por data)
+    const historySnap = await productRef
+      .collection("purchases")
+      .orderBy("purchaseDate", "desc")
+      .limit(4)
+      .get();
+
+    const lastPurchases = [];
+    let somaPrecos = 0;
+    let contador = 0;
+
+    historySnap.forEach((doc) => {
+      const data = doc.data();
+      lastPurchases.push({
+        id: doc.id,
+        ...data
+      });
+
+      if (typeof data.unitPrice === "number") {
+        somaPrecos += data.unitPrice;
+        contador += 1;
+      }
+    });
+
+    const avgLast4UnitPrice = contador > 0 ? somaPrecos / contador : null;
+
+    return res.json({
+      product,          // todos os campos do produto
+      lastPurchases,    // último até 4 registros de compras
+      avgLast4UnitPrice // média dos últimos 4 unitPrice
+    });
+  } catch (err) {
+    console.error("Erro em GET /products/:id/summary", err);
+    return res.status(500).json({ error: "Erro ao buscar resumo do produto" });
+  }
+});
 
 
 // 🔄 Atualizar um produto (ex: corrigir descrição)

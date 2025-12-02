@@ -38,6 +38,62 @@ try {
 const db = admin.firestore();
 
 // -------------------------------------------------------------
+// 🔠 Funções de normalização e similaridade de texto
+// -------------------------------------------------------------
+function normalizeString(str) {
+  if (!str) return "";
+  return str
+    .toLowerCase()
+    .normalize("NFD")                 // separa acentos
+    .replace(/[\u0300-\u036f]/g, "")  // remove acentos
+    .replace(/[^a-z0-9\s]/g, "")      // remove símbolos estranhos
+    .replace(/\s+/g, " ")             // espaços múltiplos -> 1
+    .trim();
+}
+
+function levenshtein(a, b) {
+  a = normalizeString(a);
+  b = normalizeString(b);
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  const dp = [];
+  for (let i = 0; i <= m; i++) {
+    dp[i] = [i];
+  }
+  for (let j = 0; j <= n; j++) {
+    dp[0][j] = j;
+  }
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,      // deleção
+        dp[i][j - 1] + 1,      // inserção
+        dp[i - 1][j - 1] + cost // substituição
+      );
+    }
+  }
+
+  return dp[m][n];
+}
+
+function similarityScore(a, b) {
+  a = normalizeString(a);
+  b = normalizeString(b);
+  if (!a || !b) return 0;
+  const dist = levenshtein(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 0;
+  // 1 = igual, 0 = totalmente diferente
+  return 1 - dist / maxLen;
+}
+
+
+// -------------------------------------------------------------
 // 🧂 PRODUTOS / ESTOQUE
 // -------------------------------------------------------------
 
@@ -203,6 +259,7 @@ app.post("/products/:id/purchase", async (req, res) => {
 });
 
 // Compra rápida: encontra (ou cria) produto por descrição + unidade
+// Compra rápida: encontra (ou cria) produto por descrição + unidade, com busca por semelhança
 app.post("/products/quick-purchase", async (req, res) => {
   try {
     const {
@@ -225,8 +282,10 @@ app.post("/products/quick-purchase", async (req, res) => {
     const purchaseD =
       purchaseDate || new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-    // 1) Tenta achar produto por descrição + unidade
-    const querySnap = await db
+    const THRESHOLD = 0.75; // 0.75 = 75% de "parecido"
+
+    // 1) Tenta achar produto por descrição + unidade (igualzinho)
+    let querySnap = await db
       .collection("products")
       .where("description", "==", description)
       .where("unit", "==", unit)
@@ -239,29 +298,63 @@ app.post("/products/quick-purchase", async (req, res) => {
     let createdNew = false;
 
     if (querySnap.empty) {
-      // 2) Não existe -> cria produto novo
-      productRef = db.collection("products").doc();
-      previousQuantity = 0;
-      currentQuantity = quantity;
+      // 2) Não achou igualzinho -> procura por semelhança entre produtos com a mesma unidade
+      const allSnap = await db
+        .collection("products")
+        .where("unit", "==", unit)
+        .get();
 
-      await productRef.set({
-        description,
-        unit,
-        unitSize: null,
-        unitPrice,
-        yieldPercent: null,
-        notes: "",
-        location: "",
-        previousQuantity,
-        purchaseQuantity: quantity,
-        currentQuantity,
-        createdAt: now,
-        updatedAt: now
+      let bestDoc = null;
+      let bestScore = 0;
+
+      allSnap.forEach((doc) => {
+        const data = doc.data();
+        const score = similarityScore(description, data.description || "");
+        if (score > bestScore) {
+          bestScore = score;
+          bestDoc = doc;
+        }
       });
 
-      createdNew = true;
+      if (bestDoc && bestScore >= THRESHOLD) {
+        // 2a) Achou um produto bem parecido -> considera o mesmo produto
+        productRef = bestDoc.ref;
+        const product = bestDoc.data();
+        previousQuantity = product.currentQuantity || 0;
+        currentQuantity = previousQuantity + quantity;
+
+        await productRef.update({
+          previousQuantity,
+          purchaseQuantity: quantity,
+          currentQuantity,
+          unitPrice,
+          updatedAt: now
+        });
+      } else {
+        // 2b) Nada parecido o suficiente -> cria produto novo
+        productRef = db.collection("products").doc();
+        previousQuantity = 0;
+        currentQuantity = quantity;
+
+        await productRef.set({
+          description,
+          unit,
+          unitSize: null,
+          unitPrice,
+          yieldPercent: null,
+          notes: "",
+          location: "",
+          previousQuantity,
+          purchaseQuantity: quantity,
+          currentQuantity,
+          createdAt: now,
+          updatedAt: now
+        });
+
+        createdNew = true;
+      }
     } else {
-      // 3) Já existe -> usa o primeiro encontrado
+      // 3) Já existe igualzinho -> usa o primeiro encontrado
       const doc = querySnap.docs[0];
       productRef = doc.ref;
       const product = doc.data();
@@ -278,7 +371,7 @@ app.post("/products/quick-purchase", async (req, res) => {
       });
     }
 
-       // 4) Registra histórico da compra (com estoque antes/depois)
+    // 4) Registra histórico da compra (com estoque antes/depois)
     const purchaseRef = await productRef.collection("purchases").add({
       purchaseDate: purchaseD,
       quantity,
@@ -303,7 +396,7 @@ app.post("/products/quick-purchase", async (req, res) => {
 });
 
 
-// 🔍 Resumo do produto buscando por descrição + unidade (sem precisar de id)
+// 🔍 Resumo do produto buscando por descrição + unidade (com busca por semelhança)
 app.post("/products/summary-by-description", async (req, res) => {
   try {
     const { description, unit } = req.body;
@@ -314,23 +407,52 @@ app.post("/products/summary-by-description", async (req, res) => {
       });
     }
 
-    // 1) Achar produto por descrição + unidade
-    const querySnap = await db
+    const THRESHOLD = 0.75;
+
+    // 1) Tenta achar produto por descrição + unidade (igualzinho)
+    let querySnap = await db
       .collection("products")
       .where("description", "==", description)
       .where("unit", "==", unit)
       .limit(1)
       .get();
 
+    let productRef;
+    let product;
+
     if (querySnap.empty) {
-      return res.status(404).json({ error: "Produto não encontrado" });
+      // 2) Não achou igualzinho -> faz busca por semelhança
+      const allSnap = await db
+        .collection("products")
+        .where("unit", "==", unit)
+        .get();
+
+      let bestDoc = null;
+      let bestScore = 0;
+
+      allSnap.forEach((doc) => {
+        const data = doc.data();
+        const score = similarityScore(description, data.description || "");
+        if (score > bestScore) {
+          bestScore = score;
+          bestDoc = doc;
+        }
+      });
+
+      if (!bestDoc || bestScore < THRESHOLD) {
+        return res.status(404).json({ error: "Produto não encontrado (nem parecido)" });
+      }
+
+      productRef = bestDoc.ref;
+      product = { id: bestDoc.id, ...bestDoc.data(), similarity: bestScore };
+    } else {
+      // 3) Achou igualzinho
+      const doc = querySnap.docs[0];
+      productRef = doc.ref;
+      product = { id: doc.id, ...doc.data(), similarity: 1 };
     }
 
-    const doc = querySnap.docs[0];
-    const productRef = doc.ref;
-    const product = { id: doc.id, ...doc.data() };
-
-    // 2) Buscar as 4 últimas compras
+    // 4) Buscar as 4 últimas compras
     const historySnap = await productRef
       .collection("purchases")
       .orderBy("purchaseDate", "desc")

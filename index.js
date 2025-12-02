@@ -303,6 +303,72 @@ app.post("/products/quick-purchase", async (req, res) => {
 });
 
 
+// 🔍 Resumo do produto buscando por descrição + unidade (sem precisar de id)
+app.post("/products/summary-by-description", async (req, res) => {
+  try {
+    const { description, unit } = req.body;
+
+    if (!description || !unit) {
+      return res.status(400).json({
+        error: "Campos obrigatórios: description e unit"
+      });
+    }
+
+    // 1) Achar produto por descrição + unidade
+    const querySnap = await db
+      .collection("products")
+      .where("description", "==", description)
+      .where("unit", "==", unit)
+      .limit(1)
+      .get();
+
+    if (querySnap.empty) {
+      return res.status(404).json({ error: "Produto não encontrado" });
+    }
+
+    const doc = querySnap.docs[0];
+    const productRef = doc.ref;
+    const product = { id: doc.id, ...doc.data() };
+
+    // 2) Buscar as 4 últimas compras
+    const historySnap = await productRef
+      .collection("purchases")
+      .orderBy("purchaseDate", "desc")
+      .limit(4)
+      .get();
+
+    const lastPurchases = [];
+    let somaPrecos = 0;
+    let contador = 0;
+
+    historySnap.forEach((h) => {
+      const data = h.data();
+      lastPurchases.push({
+        id: h.id,
+        ...data
+      });
+
+      if (typeof data.unitPrice === "number") {
+        somaPrecos += data.unitPrice;
+        contador += 1;
+      }
+    });
+
+    const avgLast4UnitPrice = contador > 0 ? somaPrecos / contador : null;
+
+    return res.json({
+      product,
+      lastPurchases,
+      avgLast4UnitPrice
+    });
+  } catch (err) {
+    console.error("Erro em POST /products/summary-by-description", err);
+    return res.status(500).json({ error: "Erro ao buscar resumo por descrição" });
+  }
+});
+
+
+
 // 📜 Histórico de compras de um produto
 app.get("/products/:id/history", async (req, res) => {
   try {

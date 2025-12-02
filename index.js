@@ -265,16 +265,16 @@ app.post("/products/:id/purchase", async (req, res) => {
   }
 });
 
-// 🔄 Compra rápida por descrição + unidade (com busca normalizada + similaridade)
+// 🔄 Compra rápida por descrição + unidade (sem duplicar produto)
 app.post("/products/quick-purchase", async (req, res) => {
   try {
     const {
-      description,   // descrição digitada (pode vir minúscula)
-      unit,          // ex: "kg", "un"
-      quantity,      // quantidade comprada
-      totalPrice,    // preço total
+      description,   // ex: "shoyu"
+      unit,          // ex: "kg"
+      quantity,      // ex: 10
+      totalPrice,    // ex: 3200 (R$ 32,00 ou 320,00 dependendo do que você passar)
       purchaseDate,  // "YYYY-MM-DD" (opcional)
-      supplier = "", // onde foi comprado
+      supplier = "", // ex: "Carrefour"
       location = ""  // salva local no produto
     } = req.body;
 
@@ -298,26 +298,73 @@ app.post("/products/quick-purchase", async (req, res) => {
     const THRESHOLD = 0.6; // similaridade mínima
 
     const descNorm = normalizeString(description);
-    const unitNorm = normalizeString(String(unit));
 
-    let productRef;
+    let productRef = null;
     let previousQuantity = 0;
     let currentQuantity = 0;
     let createdNew = false;
 
-    // 1) Tenta achar produto por descrição/unidade NORMALIZADAS (ignora maiúscula, acento etc.)
-    let querySnap = await db
+    // 1) Busca todos os produtos com a MESMA unidade
+    const sameUnitSnap = await db
       .collection("products")
-      .where("normalizedDescription", "==", descNorm)
-      .where("normalizedUnit", "==", unitNorm)
-      .limit(1)
+      .where("unit", "==", unit)
       .get();
 
-    if (!querySnap.empty) {
-      // Achou igual (normalizado)
-      const doc = querySnap.docs[0];
-      productRef = doc.ref;
-      const product = doc.data();
+    let exactDoc = null;   // descrição normalizada idêntica
+    let bestDoc = null;    // mais parecido pela similaridade
+    let bestScore = 0;
+
+    sameUnitSnap.forEach((doc) => {
+      const data = doc.data();
+      const descDoc = data.description || "";
+      const descDocNorm = normalizeString(descDoc);
+
+      // (a) match exato pela versão normalizada (ignora caixa, acento, espaço)
+      if (!exactDoc && descDocNorm === descNorm) {
+        exactDoc = doc;
+      }
+
+      // (b) guarda o mais parecido
+      const score = similarityScore(description, descDoc);
+      if (score > bestScore) {
+        bestScore = score;
+        bestDoc = doc;
+      }
+    });
+
+    if (exactDoc) {
+      // 🎯 Achou descrição exatamente igual (normalizada)
+      productRef = exactDoc.ref;
+    } else if (bestDoc && bestScore >= THRESHOLD) {
+      // 👍 Não tinha igualzinha, mas tinha uma bem parecida na mesma unidade
+      productRef = bestDoc.ref;
+    } else {
+      // 2) Não achou nada bom com a mesma unidade, tenta em TODOS os produtos
+      const allSnap = await db.collection("products").get();
+      let bestDocAll = null;
+      let bestScoreAll = 0;
+
+      allSnap.forEach((doc) => {
+        const data = doc.data();
+        const descDoc = data.description || "";
+        const score = similarityScore(description, descDoc);
+        if (score > bestScoreAll) {
+          bestScoreAll = score;
+          bestDocAll = doc;
+        }
+      });
+
+      if (bestDocAll && bestScoreAll >= THRESHOLD) {
+        productRef = bestDocAll.ref;
+      } else {
+        productRef = null; // força criação de novo produto
+      }
+    }
+
+    if (productRef) {
+      // ✅ Atualiza produto EXISTENTE
+      const snap = await productRef.get();
+      const product = snap.data() || {};
 
       previousQuantity = product.currentQuantity || 0;
       currentQuantity = previousQuantity + q;
@@ -331,87 +378,30 @@ app.post("/products/quick-purchase", async (req, res) => {
         updatedAt: now
       });
     } else {
-      // 2) Não achou igual normalizado -> procura mais parecido na mesma unidade normalizada
-      let allSnap = await db
-        .collection("products")
-        .where("normalizedUnit", "==", unitNorm)
-        .get();
+      // 🆕 Cria produto NOVO (só se realmente não achou nada parecido)
+      productRef = db.collection("products").doc();
+      previousQuantity = 0;
+      currentQuantity = q;
 
-      let bestDoc = null;
-      let bestScore = 0;
-
-      allSnap.forEach((doc) => {
-        const data = doc.data();
-        const score = similarityScore(description, data.description || "");
-        if (score > bestScore) {
-          bestScore = score;
-          bestDoc = doc;
-        }
+      await productRef.set({
+        description,
+        unit,
+        unitSize: null,
+        unitPrice,
+        yieldPercent: null,
+        notes: "",
+        location,
+        previousQuantity,
+        purchaseQuantity: q,
+        currentQuantity,
+        createdAt: now,
+        updatedAt: now
       });
 
-      // Se nada bom com mesma unidade, tenta geral
-      if (!bestDoc || bestScore < THRESHOLD) {
-        const allSnap2 = await db.collection("products").get();
-        bestDoc = null;
-        bestScore = 0;
-
-        allSnap2.forEach((doc) => {
-          const data = doc.data();
-          const score = similarityScore(description, data.description || "");
-          if (score > bestScore) {
-            bestScore = score;
-            bestDoc = doc;
-          }
-        });
-      }
-
-      if (bestDoc && bestScore >= THRESHOLD) {
-        // 3) Achou parecido -> usa produto existente
-        productRef = bestDoc.ref;
-        const product = bestDoc.data();
-
-        previousQuantity = product.currentQuantity || 0;
-        currentQuantity = previousQuantity + q;
-
-        await productRef.update({
-          previousQuantity,
-          purchaseQuantity: q,
-          currentQuantity,
-          unitPrice,
-          location: location || product.location || "",
-          updatedAt: now
-        });
-      } else {
-        // 4) Nada parecido -> cria produto novo
-        const normalizedDescription = descNorm;
-        const normalizedUnit = unitNorm;
-
-        productRef = db.collection("products").doc();
-        previousQuantity = 0;
-        currentQuantity = q;
-
-        await productRef.set({
-          description,  // salva como veio
-          unit,
-          normalizedDescription,
-          normalizedUnit,
-          unitSize: null,
-          unitPrice,
-          yieldPercent: null,
-          notes: "",
-          location,
-          previousQuantity,
-          purchaseQuantity: q,
-          currentQuantity,
-          createdAt: now,
-          updatedAt: now
-        });
-
-        createdNew = true;
-      }
+      createdNew = true;
     }
 
-    // 5) registra histórico da compra
+    // 3) registra histórico da compra (sempre)
     const purchaseRef = await productRef.collection("purchases").add({
       purchaseDate: purchaseDate || null,
       quantity: q,

@@ -413,6 +413,12 @@ app.post("/products/quick-purchase", async (req, res) => {
       productId: productRef.id,
       purchaseId: purchaseRef.id,
       createdNewProduct: createdNew
+    });
+  } catch (err) {
+    console.error("Erro /products/quick-purchase POST:", err);
+    return res.status(500).json({ error: "Erro em quick-purchase" });
+  }
+});
 
 
 // 🔍 Resumo do produto buscando por descrição + unidade (com busca por semelhança)

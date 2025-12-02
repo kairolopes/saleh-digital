@@ -258,117 +258,81 @@ app.post("/products/:id/purchase", async (req, res) => {
   }
 });
 
-// Compra rápida: encontra (ou cria) produto por descrição + unidade
-// Compra rápida: encontra (ou cria) produto por descrição + unidade, com busca por semelhança
-app.post("/products/quick-purchase", async (req, res) => {
-  try {
-    const {
+if (querySnap.empty) {
+  // 2) Não achou igualzinho -> primeiro tenta por semelhança COM a mesma unidade
+  let allSnap = await db
+    .collection("products")
+    .where("unit", "==", unit)
+    .get();
+
+  let bestDoc = null;
+  let bestScore = 0;
+
+  allSnap.forEach((doc) => {
+    const data = doc.data();
+    const score = similarityScore(description, data.description || "");
+    if (score > bestScore) {
+      bestScore = score;
+      bestDoc = doc;
+    }
+  });
+
+  // Se não achou nada com a mesma unidade, tenta de novo SEM filtrar por unidade
+  if (!bestDoc || bestScore < THRESHOLD) {
+    const allSnap2 = await db.collection("products").get();
+
+    bestDoc = null;
+    bestScore = 0;
+
+    allSnap2.forEach((doc) => {
+      const data = doc.data();
+      const score = similarityScore(description, data.description || "");
+      if (score > bestScore) {
+        bestScore = score;
+        bestDoc = doc;
+      }
+    });
+  }
+
+  if (bestDoc && bestScore >= THRESHOLD) {
+    // Achou um produto parecido -> considera o mesmo produto
+    productRef = bestDoc.ref;
+    const product = bestDoc.data();
+    previousQuantity = product.currentQuantity || 0;
+    currentQuantity = previousQuantity + quantity;
+
+    await productRef.update({
+      previousQuantity,
+      purchaseQuantity: quantity,
+      currentQuantity,
+      unitPrice,
+      updatedAt: now
+    });
+  } else {
+    // Nada parecido o suficiente -> cria produto novo
+    productRef = db.collection("products").doc();
+    previousQuantity = 0;
+    currentQuantity = quantity;
+
+    await productRef.set({
       description,
       unit,
-      quantity,
-      totalPrice,
-      purchaseDate,
-      supplier = ""
-    } = req.body;
+      unitSize: null,
+      unitPrice,
+      yieldPercent: null,
+      notes: "",
+      location: "",
+      previousQuantity,
+      purchaseQuantity: quantity,
+      currentQuantity,
+      createdAt: now,
+      updatedAt: now
+    });
 
-    if (!description || !unit || !quantity || !totalPrice) {
-      return res.status(400).json({
-        error: "Campos obrigatórios: description, unit, quantity, totalPrice"
-      });
-    }
+    createdNew = true;
+  }
+}
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    const unitPrice = totalPrice / quantity;
-    const purchaseD =
-      purchaseDate || new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-
-    const THRESHOLD = 0.75; // 0.75 = 75% de "parecido"
-
-    // 1) Tenta achar produto por descrição + unidade (igualzinho)
-    let querySnap = await db
-      .collection("products")
-      .where("description", "==", description)
-      .where("unit", "==", unit)
-      .limit(1)
-      .get();
-
-    let productRef;
-    let previousQuantity;
-    let currentQuantity;
-    let createdNew = false;
-
-    if (querySnap.empty) {
-      // 2) Não achou igualzinho -> procura por semelhança entre produtos com a mesma unidade
-      const allSnap = await db
-        .collection("products")
-        .where("unit", "==", unit)
-        .get();
-
-      let bestDoc = null;
-      let bestScore = 0;
-
-      allSnap.forEach((doc) => {
-        const data = doc.data();
-        const score = similarityScore(description, data.description || "");
-        if (score > bestScore) {
-          bestScore = score;
-          bestDoc = doc;
-        }
-      });
-
-      if (bestDoc && bestScore >= THRESHOLD) {
-        // 2a) Achou um produto bem parecido -> considera o mesmo produto
-        productRef = bestDoc.ref;
-        const product = bestDoc.data();
-        previousQuantity = product.currentQuantity || 0;
-        currentQuantity = previousQuantity + quantity;
-
-        await productRef.update({
-          previousQuantity,
-          purchaseQuantity: quantity,
-          currentQuantity,
-          unitPrice,
-          updatedAt: now
-        });
-      } else {
-        // 2b) Nada parecido o suficiente -> cria produto novo
-        productRef = db.collection("products").doc();
-        previousQuantity = 0;
-        currentQuantity = quantity;
-
-        await productRef.set({
-          description,
-          unit,
-          unitSize: null,
-          unitPrice,
-          yieldPercent: null,
-          notes: "",
-          location: "",
-          previousQuantity,
-          purchaseQuantity: quantity,
-          currentQuantity,
-          createdAt: now,
-          updatedAt: now
-        });
-
-        createdNew = true;
-      }
-    } else {
-      // 3) Já existe igualzinho -> usa o primeiro encontrado
-      const doc = querySnap.docs[0];
-      productRef = doc.ref;
-      const product = doc.data();
-
-      previousQuantity = product.currentQuantity || 0;
-      currentQuantity = previousQuantity + quantity;
-
-      await productRef.update({
-        previousQuantity,
-        purchaseQuantity: quantity,
-        currentQuantity,
-        unitPrice,
-        updatedAt: now
-      });
     }
 
     // 4) Registra histórico da compra (com estoque antes/depois)

@@ -93,10 +93,6 @@ function similarityScore(a, b) {
 }
 
 
-// -------------------------------------------------------------
-// 🧂 PRODUTOS / ESTOQUE
-// -------------------------------------------------------------
-
 // Criar produto (insumo)
 app.post("/products", async (req, res) => {
   try {
@@ -113,11 +109,20 @@ app.post("/products", async (req, res) => {
       currentQuantity = 0
     } = req.body;
 
+    if (!description || !unit) {
+      return res.status(400).json({ error: "description e unit são obrigatórios" });
+    }
+
     const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const normalizedDescription = normalizeString(description);
+    const normalizedUnit = normalizeString(String(unit));
 
     const docRef = await db.collection("products").add({
       description,
       unit,
+      normalizedDescription,
+      normalizedUnit,
       unitSize,
       unitPrice,
       yieldPercent,
@@ -158,14 +163,17 @@ app.post("/products/batch", async (req, res) => {
         return; // pula linhas inválidas
       }
 
+      const normalizedDescription = normalizeString(description);
+      const normalizedUnit = normalizeString(String(unit));
+
       const docRef = db.collection("products").doc();
 
       batch.set(docRef, {
         description,
         unit,
+        normalizedDescription,
+        normalizedUnit,
         unitPrice,
-
-        // demais campos ficam "em branco" (padrão)
         unitSize: null,
         yieldPercent: null,
         notes: "",
@@ -173,7 +181,6 @@ app.post("/products/batch", async (req, res) => {
         previousQuantity: 0,
         purchaseQuantity: 0,
         currentQuantity: 0,
-
         createdAt: now,
         updatedAt: now
       });
@@ -258,7 +265,7 @@ app.post("/products/:id/purchase", async (req, res) => {
   }
 });
 
-// 🔄 Compra rápida por descrição + unidade (com busca por similaridade)
+// 🔄 Compra rápida por descrição + unidade (com busca normalizada + similaridade)
 app.post("/products/quick-purchase", async (req, res) => {
   try {
     const {
@@ -288,23 +295,26 @@ app.post("/products/quick-purchase", async (req, res) => {
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const unitPrice = tot / q;
-    const THRESHOLD = 0.6; // nível de similaridade
+    const THRESHOLD = 0.6; // similaridade mínima
+
+    const descNorm = normalizeString(description);
+    const unitNorm = normalizeString(String(unit));
 
     let productRef;
     let previousQuantity = 0;
     let currentQuantity = 0;
     let createdNew = false;
 
-    // 1) tenta achar igual (description + unit)
+    // 1) Tenta achar produto por descrição/unidade NORMALIZADAS (ignora maiúscula, acento etc.)
     let querySnap = await db
       .collection("products")
-      .where("description", "==", description)
-      .where("unit", "==", unit)
+      .where("normalizedDescription", "==", descNorm)
+      .where("normalizedUnit", "==", unitNorm)
       .limit(1)
       .get();
 
     if (!querySnap.empty) {
-      // Achou igual
+      // Achou igual (normalizado)
       const doc = querySnap.docs[0];
       productRef = doc.ref;
       const product = doc.data();
@@ -321,10 +331,10 @@ app.post("/products/quick-purchase", async (req, res) => {
         updatedAt: now
       });
     } else {
-      // 2) procura mais parecido na mesma unidade
+      // 2) Não achou igual normalizado -> procura mais parecido na mesma unidade normalizada
       let allSnap = await db
         .collection("products")
-        .where("unit", "==", unit)
+        .where("normalizedUnit", "==", unitNorm)
         .get();
 
       let bestDoc = null;
@@ -339,7 +349,7 @@ app.post("/products/quick-purchase", async (req, res) => {
         }
       });
 
-      // se nada bom com mesma unidade, tenta geral
+      // Se nada bom com mesma unidade, tenta geral
       if (!bestDoc || bestScore < THRESHOLD) {
         const allSnap2 = await db.collection("products").get();
         bestDoc = null;
@@ -356,7 +366,7 @@ app.post("/products/quick-purchase", async (req, res) => {
       }
 
       if (bestDoc && bestScore >= THRESHOLD) {
-        // 3) achou parecido -> usa produto existente
+        // 3) Achou parecido -> usa produto existente
         productRef = bestDoc.ref;
         const product = bestDoc.data();
 
@@ -372,14 +382,19 @@ app.post("/products/quick-purchase", async (req, res) => {
           updatedAt: now
         });
       } else {
-        // 4) nada parecido -> cria produto novo
+        // 4) Nada parecido -> cria produto novo
+        const normalizedDescription = descNorm;
+        const normalizedUnit = unitNorm;
+
         productRef = db.collection("products").doc();
         previousQuantity = 0;
         currentQuantity = q;
 
         await productRef.set({
-          description,  // salva exatamente o texto que veio
+          description,  // salva como veio
           unit,
+          normalizedDescription,
+          normalizedUnit,
           unitSize: null,
           unitPrice,
           yieldPercent: null,
@@ -419,6 +434,7 @@ app.post("/products/quick-purchase", async (req, res) => {
     return res.status(500).json({ error: "Erro em quick-purchase" });
   }
 });
+
 
 
 // 🔍 Resumo do produto buscando por descrição + unidade (com busca por semelhança)

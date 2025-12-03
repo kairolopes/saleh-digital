@@ -818,7 +818,16 @@ app.get("/customers/:phone", async (req, res) => {
 // Criar ficha técnica
 app.post("/dishes", async (req, res) => {
   try {
-    const { name, yieldPortions, ingredients, salePrice } = req.body;
+    const {
+      name,
+      yieldPortions,
+      ingredients,
+      salePrice,
+      costTotal,
+      costPerPortion,
+      marginValue,
+      marginPercent
+    } = req.body;
 
     if (!name || !yieldPortions || !Array.isArray(ingredients)) {
       return res.status(400).json({
@@ -828,21 +837,32 @@ app.post("/dishes", async (req, res) => {
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    const docRef = await db.collection("dishes").add({
+    const payload = {
       name,
       yieldPortions,
       salePrice,
       ingredients,
+      costTotal,
+      costPerPortion,
+      marginValue,
+      marginPercent,
       createdAt: now,
       updatedAt: now
-    });
+    };
 
-    res.status(201).json({ id: docRef.id, message: "Ficha técnica criada" });
+    const docRef = await db.collection("dishes").add(payload);
+
+    res.status(201).json({
+      id: docRef.id,
+      ...payload,
+      message: "Ficha técnica criada"
+    });
   } catch (err) {
     console.error("Erro POST /dishes:", err);
     res.status(500).json({ error: "Erro ao criar ficha técnica" });
   }
 });
+
 
 // Listar fichas técnicas
 app.get("/dishes", async (req, res) => {
@@ -859,6 +879,7 @@ app.get("/dishes", async (req, res) => {
     res.status(500).json({ error: "Erro ao listar fichas" });
   }
 });
+
 
 // Buscar ficha individual
 app.get("/dishes/:id", async (req, res) => {

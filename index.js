@@ -812,6 +812,74 @@ app.get("/customers/:phone", async (req, res) => {
 
 
 // -------------------------------------------------------------
+// 🍽️ FICHAS TÉCNICAS (DISHES)
+// -------------------------------------------------------------
+
+// Criar ficha técnica
+app.post("/dishes", async (req, res) => {
+  try {
+    const { name, yieldPortions, ingredients, salePrice } = req.body;
+
+    if (!name || !yieldPortions || !Array.isArray(ingredients)) {
+      return res.status(400).json({
+        error: "Campos obrigatórios: name, yieldPortions, ingredients[]"
+      });
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    const docRef = await db.collection("dishes").add({
+      name,
+      yieldPortions,
+      salePrice,
+      ingredients,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    res.status(201).json({ id: docRef.id, message: "Ficha técnica criada" });
+  } catch (err) {
+    console.error("Erro POST /dishes:", err);
+    res.status(500).json({ error: "Erro ao criar ficha técnica" });
+  }
+});
+
+// Listar fichas técnicas
+app.get("/dishes", async (req, res) => {
+  try {
+    const snap = await db.collection("dishes").orderBy("name").get();
+    const dishes = snap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    res.json(dishes);
+  } catch (err) {
+    console.error("Erro GET /dishes", err);
+    res.status(500).json({ error: "Erro ao listar fichas" });
+  }
+});
+
+// Buscar ficha individual
+app.get("/dishes/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const snap = await db.collection("dishes").doc(id).get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Ficha não encontrada" });
+    }
+
+    res.json({ id: snap.id, ...snap.data() });
+  } catch (err) {
+    console.error("Erro GET /dishes/:id", err);
+    res.status(500).json({ error: "Erro ao ler ficha" });
+  }
+});
+
+
+
+// -------------------------------------------------------------
 // 🚀 Rota raiz
 // -------------------------------------------------------------
 app.get("/", (req, res) => {

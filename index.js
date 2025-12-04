@@ -867,36 +867,122 @@ app.post("/dishes", async (req, res) => {
 // Listar fichas técnicas
 app.get("/dishes", async (req, res) => {
   try {
-    const snap = await db.collection("dishes").orderBy("name").get();
-    const dishes = snap.docs.map(doc => ({
+    const snap = await db.collection("dishes").get();
+    const list = snap.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     }));
-
-    res.json(dishes);
+    res.json(list);
   } catch (err) {
-    console.error("Erro GET /dishes", err);
-    res.status(500).json({ error: "Erro ao listar fichas" });
+    console.error("Erro GET /dishes:", err);
+    res.status(500).json({ error: "Erro ao listar fichas técnicas" });
   }
 });
 
-
-// Buscar ficha individual
-app.get("/dishes/:id", async (req, res) => {
+// Atualizar ficha técnica (edição)
+app.patch("/dishes/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const snap = await db.collection("dishes").doc(id).get();
+    const docRef = db.collection("dishes").doc(id);
 
+    const snap = await docRef.get();
     if (!snap.exists) {
-      return res.status(404).json({ error: "Ficha não encontrada" });
+      return res.status(404).json({ error: "Ficha técnica não encontrada" });
     }
 
-    res.json({ id: snap.id, ...snap.data() });
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const payload = {
+      ...req.body,
+      updatedAt: now
+    };
+
+    await docRef.update(payload);
+    res.json({ id, message: "Ficha técnica atualizada" });
   } catch (err) {
-    console.error("Erro GET /dishes/:id", err);
-    res.status(500).json({ error: "Erro ao ler ficha" });
+    console.error("Erro PATCH /dishes/:id:", err);
+    res.status(500).json({ error: "Erro ao atualizar ficha técnica" });
   }
 });
+
+// Excluir ficha técnica
+app.delete("/dishes/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const docRef = db.collection("dishes").doc(id);
+
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Ficha técnica não encontrada" });
+    }
+
+    await docRef.delete();
+    res.json({ id, message: "Ficha técnica excluída" });
+  } catch (err) {
+    console.error("Erro DELETE /dishes/:id:", err);
+    res.status(500).json({ error: "Erro ao excluir ficha técnica" });
+  }
+});
+
+// Listar fichas técnicas
+app.get("/dishes", async (req, res) => {
+  try {
+    const snap = await db.collection("dishes").get();
+    const list = snap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    res.json(list);
+  } catch (err) {
+    console.error("Erro GET /dishes:", err);
+    res.status(500).json({ error: "Erro ao listar fichas técnicas" });
+  }
+});
+
+// Atualizar ficha técnica (edição)
+app.patch("/dishes/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const docRef = db.collection("dishes").doc(id);
+
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Ficha técnica não encontrada" });
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const payload = {
+      ...req.body,
+      updatedAt: now
+    };
+
+    await docRef.update(payload);
+    res.json({ id, message: "Ficha técnica atualizada" });
+  } catch (err) {
+    console.error("Erro PATCH /dishes/:id:", err);
+    res.status(500).json({ error: "Erro ao atualizar ficha técnica" });
+  }
+});
+
+// Excluir ficha técnica
+app.delete("/dishes/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const docRef = db.collection("dishes").doc(id);
+
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Ficha técnica não encontrada" });
+    }
+
+    await docRef.delete();
+    res.json({ id, message: "Ficha técnica excluída" });
+  } catch (err) {
+    console.error("Erro DELETE /dishes/:id:", err);
+    res.status(500).json({ error: "Erro ao excluir ficha técnica" });
+  }
+});
+
+
 
 
 
